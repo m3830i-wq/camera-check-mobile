@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0b0d10">
   <title>JANコードスキャナー</title>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.12.1/dist/quagga.min.js"></script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans JP", sans-serif; }
     * { box-sizing: border-box; }
@@ -180,21 +181,27 @@
       try {
         if (scanner?.isScanning) await scanner.stop();
         scanner?.clear();
-        scanner = new Html5Qrcode('reader', {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.UPC_E
-          ],
-          verbose: false
-        });
         idle.hidden = true;
         startButton.disabled = true;
         stopButton.disabled = true;
         message.className = '';
         message.textContent = '撮影した写真を解析しています…';
-        const decodedText = await scanner.scanFile(file, true);
+        let decodedText;
+        if (window.Quagga) {
+          decodedText = await decodePhotoWithQuagga(file);
+        }
+        if (!decodedText) {
+          scanner = new Html5Qrcode('reader', {
+            formatsToSupport: [
+              Html5QrcodeSupportedFormats.EAN_13,
+              Html5QrcodeSupportedFormats.EAN_8,
+              Html5QrcodeSupportedFormats.UPC_A,
+              Html5QrcodeSupportedFormats.UPC_E
+            ],
+            verbose: false
+          });
+          decodedText = await scanner.scanFile(file, true);
+        }
         showResult(decodedText);
       } catch {
         message.className = 'error';
@@ -208,6 +215,40 @@
         stopButton.disabled = true;
         photoInput.value = '';
       }
+    }
+
+    function decodePhotoWithQuagga(file) {
+      return new Promise((resolve) => {
+        const objectUrl = URL.createObjectURL(file);
+        let finished = false;
+        const finish = (value) => {
+          if (finished) return;
+          finished = true;
+          URL.revokeObjectURL(objectUrl);
+          resolve(value || '');
+        };
+        const timeout = setTimeout(() => finish(''), 15000);
+        Quagga.decodeSingle({
+          src: objectUrl,
+          numOfWorkers: 0,
+          locate: true,
+          inputStream: {
+            size: 2000,
+            singleChannel: false
+          },
+          locator: {
+            patchSize: 'medium',
+            halfSample: false
+          },
+          decoder: {
+            readers: ['ean_reader', 'ean_8_reader', 'upc_reader', 'upc_e_reader'],
+            multiple: false
+          }
+        }, (result) => {
+          clearTimeout(timeout);
+          finish(result?.codeResult?.code || '');
+        });
+      });
     }
 
     startButton.addEventListener('click', startScan);
