@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d10">
+  <title>JANコードスキャナー</title>
+  <script src="https://unpkg.com/@zxing/browser@0.2.0"></script>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans JP", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; background: #0b0d10; color: #f7f4ed; padding: max(20px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom)); }
+    main { width: min(100%, 720px); margin: auto; }
+    .eyebrow { color: #b7ff4a; font-size: 12px; font-weight: 800; letter-spacing: .15em; }
+    h1 { margin: 8px 0 8px; font-size: clamp(32px, 10vw, 58px); letter-spacing: -.05em; line-height: 1; }
+    .lead { margin: 0 0 18px; color: #a9acb2; line-height: 1.65; }
+    .camera { position: relative; overflow: hidden; aspect-ratio: 3/4; max-height: 62svh; border: 1px solid #30343b; border-radius: 24px; background: #171a20; }
+    video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .guide { position: absolute; inset: 50% 8% auto; height: 25%; transform: translateY(-50%); border: 3px solid #b7ff4a; border-radius: 16px; box-shadow: 0 0 0 999px #0008; pointer-events: none; }
+    .guide::after { content: "JANコードを枠内へ"; position: absolute; left: 50%; bottom: -36px; transform: translateX(-50%); white-space: nowrap; font-size: 13px; font-weight: 700; }
+    .idle { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: #9ba0a8; padding: 30px; }
+    .idle strong { display: block; color: #f7f4ed; font-size: 21px; margin-bottom: 8px; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    button { min-height: 52px; border: 0; border-radius: 999px; font: inherit; font-weight: 800; cursor: pointer; }
+    #start { background: #b7ff4a; color: #11140d; }
+    #stop { background: #252930; color: #fff; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    .result { margin-top: 14px; padding: 18px; border: 1px solid #30343b; border-radius: 20px; background: #14171c; }
+    .result small { display: block; color: #9398a1; margin-bottom: 5px; }
+    #code { font: 800 clamp(26px, 8vw, 42px)/1.2 ui-monospace, monospace; letter-spacing: .06em; overflow-wrap: anywhere; }
+    #message { min-height: 24px; margin: 12px 4px 0; color: #a9acb2; }
+    #message.error { color: #ff9a8f; }
+    .manual { margin-top: 12px; display: flex; gap: 8px; }
+    input { min-width: 0; flex: 1; padding: 14px; border: 1px solid #3a3f47; border-radius: 13px; background: #14171c; color: #fff; font-size: 16px; }
+    .manual button { min-height: 48px; padding: 0 18px; background: #30353d; color: #fff; border-radius: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">MOBILE BARCODE READER</div>
+    <h1>JANスキャナー</h1>
+    <p class="lead">商品のJANコードを背面カメラで読み取ります。映像や画像は保存・送信しません。</p>
+
+    <section class="camera" aria-label="カメラ映像">
+      <video id="preview" playsinline muted></video>
+      <div class="idle" id="idle"><div><strong>カメラは停止中です</strong>下の「スキャン開始」を押してください</div></div>
+      <div class="guide" id="guide" hidden></div>
+    </section>
+
+    <div class="actions">
+      <button id="start" type="button">スキャン開始</button>
+      <button id="stop" type="button" disabled>停止</button>
+    </div>
+
+    <section class="result" aria-live="polite">
+      <small>読み取り結果</small>
+      <div id="code">—</div>
+    </section>
+    <p id="message" role="status">初回のみ、Chromeのカメラ許可が表示されます。</p>
+
+    <div class="manual">
+      <input id="manualCode" inputmode="numeric" maxlength="13" placeholder="読み取れない場合は数字を入力" aria-label="JANコードを手入力">
+      <button id="applyManual" type="button">入力</button>
+    </div>
+  </main>
+
+  <script>
+    const video = document.querySelector('#preview');
+    const startButton = document.querySelector('#start');
+    const stopButton = document.querySelector('#stop');
+    const idle = document.querySelector('#idle');
+    const guide = document.querySelector('#guide');
+    const code = document.querySelector('#code');
+    const message = document.querySelector('#message');
+    const manualCode = document.querySelector('#manualCode');
+    let controls;
+    let lastValue = '';
+
+    function showResult(value) {
+      if (!/^\d{8}$|^\d{13}$/.test(value) || value === lastValue) return;
+      lastValue = value;
+      code.textContent = value;
+      message.className = '';
+      message.textContent = 'JANコードを読み取りました。';
+      navigator.vibrate?.(120);
+    }
+
+    async function startScan() {
+      if (!window.ZXingBrowser) {
+        message.className = 'error';
+        message.textContent = '読み取り機能を読み込めませんでした。通信状態を確認してください。';
+        return;
+      }
+      startButton.disabled = true;
+      message.className = '';
+      message.textContent = 'カメラを準備しています…';
+      try {
+        const reader = new ZXingBrowser.BrowserMultiFormatReader();
+        controls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+          video,
+          (result) => result && showResult(result.getText())
+        );
+        idle.hidden = true;
+        guide.hidden = false;
+        stopButton.disabled = false;
+        message.textContent = 'JANコードを緑の枠へ近づけてください。';
+      } catch (error) {
+        startButton.disabled = false;
+        message.className = 'error';
+        message.textContent = error.name === 'NotAllowedError'
+          ? 'カメラが許可されませんでした。Chromeのサイト設定から許可してください。'
+          : 'カメラを起動できませんでした。ほかのアプリを閉じて再度お試しください。';
+      }
+    }
+
+    function stopScan() {
+      controls?.stop();
+      controls = undefined;
+      video.srcObject = null;
+      idle.hidden = false;
+      guide.hidden = true;
+      startButton.disabled = false;
+      stopButton.disabled = true;
+      message.className = '';
+      message.textContent = 'スキャンを停止しました。';
+    }
+
+    startButton.addEventListener('click', startScan);
+    stopButton.addEventListener('click', stopScan);
+    document.querySelector('#applyManual').addEventListener('click', () => {
+      const value = manualCode.value.replace(/\D/g, '');
+      if (/^\d{8}$|^\d{13}$/.test(value)) showResult(value);
+      else {
+        message.className = 'error';
+        message.textContent = 'JANコードは8桁または13桁で入力してください。';
+      }
+    });
+    window.addEventListener('pagehide', () => controls?.stop());
+  </script>
+</body>
+</html>
