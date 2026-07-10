@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b0d10">
   <title>JANコードスキャナー</title>
-  <script src="https://unpkg.com/@zxing/browser@0.2.0"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans JP", sans-serif; }
     * { box-sizing: border-box; }
@@ -43,7 +43,7 @@
     <p class="lead">商品のJANコードを背面カメラで読み取ります。映像や画像は保存・送信しません。</p>
 
     <section class="camera" aria-label="カメラ映像">
-      <video id="preview" playsinline muted></video>
+      <div id="reader"></div>
       <div class="idle" id="idle"><div><strong>カメラは停止中です</strong>下の「スキャン開始」を押してください</div></div>
       <div class="guide" id="guide" hidden></div>
     </section>
@@ -66,7 +66,7 @@
   </main>
 
   <script>
-    const video = document.querySelector('#preview');
+    const readerElement = document.querySelector('#reader');
     const startButton = document.querySelector('#start');
     const stopButton = document.querySelector('#stop');
     const idle = document.querySelector('#idle');
@@ -74,7 +74,7 @@
     const code = document.querySelector('#code');
     const message = document.querySelector('#message');
     const manualCode = document.querySelector('#manualCode');
-    let controls;
+    let scanner;
     let lastValue = '';
     let detectorRunning = false;
 
@@ -112,7 +112,7 @@
     }
 
     async function startScan() {
-      if (!window.ZXingBrowser) {
+      if (!window.Html5Qrcode) {
         message.className = 'error';
         message.textContent = '読み取り機能を読み込めませんでした。通信状態を確認してください。';
         return;
@@ -121,17 +121,33 @@
       message.className = '';
       message.textContent = 'カメラを準備しています…';
       try {
-        const reader = new ZXingBrowser.BrowserMultiFormatReader();
-        controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
-          video,
-          (result) => result && showResult(result.getText())
+        scanner = new Html5Qrcode('reader', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E
+          ],
+          verbose: false
+        });
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 12,
+            qrbox: (width, height) => ({
+              width: Math.floor(Math.min(width * 0.9, 420)),
+              height: Math.floor(Math.min(height * 0.3, 150))
+            }),
+            aspectRatio: 1.333333,
+            disableFlip: true,
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+          },
+          (decodedText) => showResult(decodedText),
+          () => {}
         );
         idle.hidden = true;
-        guide.hidden = false;
         stopButton.disabled = false;
-        startNativeDetection();
-        message.textContent = 'JANコードを横向きのまま緑の枠へ近づけてください。';
+        message.textContent = 'JANコードを横向きのまま読み取り枠へ近づけてください。';
       } catch (error) {
         startButton.disabled = false;
         message.className = 'error';
@@ -141,11 +157,12 @@
       }
     }
 
-    function stopScan() {
-      controls?.stop();
+    async function stopScan() {
       detectorRunning = false;
-      controls = undefined;
-      video.srcObject = null;
+      if (scanner?.isScanning) await scanner.stop();
+      scanner?.clear();
+      scanner = undefined;
+      readerElement.innerHTML = '';
       idle.hidden = false;
       guide.hidden = true;
       startButton.disabled = false;
@@ -164,7 +181,7 @@
         message.textContent = 'JANコードは8桁または13桁で入力してください。';
       }
     });
-    window.addEventListener('pagehide', () => controls?.stop());
+    window.addEventListener('pagehide', () => scanner?.isScanning && scanner.stop());
   </script>
 </body>
 </html>
