@@ -76,6 +76,31 @@
     const manualCode = document.querySelector('#manualCode');
     let controls;
     let lastValue = '';
+    let detectorRunning = false;
+
+    async function startNativeDetection() {
+      if (!('BarcodeDetector' in window)) return;
+      try {
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const formats = ['ean_13', 'ean_8'].filter((format) => supported.includes(format));
+        if (!formats.length) return;
+        const detector = new BarcodeDetector({ formats });
+        detectorRunning = true;
+        let previousScan = 0;
+        const detect = async (now) => {
+          if (!detectorRunning) return;
+          if (video.readyState >= 2 && now - previousScan > 180) {
+            previousScan = now;
+            try {
+              const barcodes = await detector.detect(video);
+              if (barcodes[0]?.rawValue) showResult(barcodes[0].rawValue);
+            } catch {}
+          }
+          requestAnimationFrame(detect);
+        };
+        requestAnimationFrame(detect);
+      } catch {}
+    }
 
     function showResult(value) {
       if (!/^\d{8}$|^\d{13}$/.test(value) || value === lastValue) return;
@@ -105,7 +130,8 @@
         idle.hidden = true;
         guide.hidden = false;
         stopButton.disabled = false;
-        message.textContent = 'JANコードを緑の枠へ近づけてください。';
+        startNativeDetection();
+        message.textContent = 'JANコードを横向きのまま緑の枠へ近づけてください。';
       } catch (error) {
         startButton.disabled = false;
         message.className = 'error';
@@ -117,6 +143,7 @@
 
     function stopScan() {
       controls?.stop();
+      detectorRunning = false;
       controls = undefined;
       video.srcObject = null;
       idle.hidden = false;
